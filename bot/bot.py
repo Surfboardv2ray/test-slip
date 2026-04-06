@@ -10,22 +10,24 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 MAX_TELEGRAM_MESSAGE = 3900  # safety margin under Telegram message limits
 
 
-def split_text(text: str, limit: int = MAX_TELEGRAM_MESSAGE):
+def split_text(lines, limit: int = MAX_TELEGRAM_MESSAGE, header: str = "Parsed DNS for Slipnet:\n\n"):
     chunks = []
     current = []
-    current_len = 0
+    current_len = len(header)
 
-    for line in text.splitlines(keepends=True):
-        if current_len + len(line) > limit and current:
-            chunks.append("".join(current))
+    for line in lines:
+        line_len = len(line) + 1  # +1 for newline
+
+        if current and current_len + line_len > limit:
+            chunks.append(current)
             current = [line]
-            current_len = len(line)
+            current_len = len(header) + len(line) + 1
         else:
             current.append(line)
-            current_len += len(line)
+            current_len += line_len
 
     if current:
-        chunks.append("".join(current))
+        chunks.append(current)
 
     return chunks
 
@@ -34,7 +36,7 @@ def send_telegram_message(token: str, chat_id: str, text: str):
     url = f"{TELEGRAM_API_BASE}/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
-        "text": f"<blockquote expandable>{html.escape(text)}</blockquote>",
+        "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
@@ -60,6 +62,11 @@ def send_telegram_message(token: str, chat_id: str, text: str):
         raise RuntimeError(f"Failed to send Telegram message: {e}") from e
 
 
+def format_chunk(lines):
+    body = "\n".join(f"<code>{html.escape(line)}</code>" for line in lines if line.strip())
+    return f"Parsed DNS for Slipnet:\n\n{body}"
+
+
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -79,17 +86,15 @@ def main():
         sys.exit(1)
 
     content = file_path.read_text(encoding="utf-8", errors="replace")
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
 
-    if not content.strip():
-        content = "(dns/dns.txt is empty)"
+    if not lines:
+        lines = ["(dns/dns.txt is empty)"]
 
-    chunks = split_text(content)
+    chunks = split_text(lines)
 
-    for index, chunk in enumerate(chunks, start=1):
-        if len(chunks) == 1:
-            message = chunk
-        else:
-            message = f"Part {index}/{len(chunks)}\n\n{chunk}"
+    for chunk in chunks:
+        message = format_chunk(chunk)
         send_telegram_message(token, chat_id, message)
 
     print(f"Sent {len(chunks)} message(s) from {file_path}")
@@ -97,4 +102,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
