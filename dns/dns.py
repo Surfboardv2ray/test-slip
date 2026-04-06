@@ -12,14 +12,11 @@ OUTPUT_FILE = "dns/dns.txt"
 
 SLIPNET_PREFIX = "slipnet://"
 
-# Strict IPv4 validator.
+# Match IPv4:port:flag items, optionally comma-separated.
 IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
-
-# Accept DNS parts like:
-# 8.8.8.8:53:0
-# 2.188.21.120:53:0,2.188.21.240:53:0,...
-DNS_ITEM_RE = rf"{IPV4_OCTET}(?:\.{IPV4_OCTET}){{3}}:\d{{1,5}}:\d+"
-DNS_LIST_RE = re.compile(rf"^{DNS_ITEM_RE}(?:,{DNS_ITEM_RE})*$")
+DNS_ITEM_RE = re.compile(
+    rf"^({IPV4_OCTET}(?:\.{IPV4_OCTET}){{3}}):(\d{{1,5}}):(\d+)$"
+)
 
 
 def is_valid_base64(value: str) -> bool:
@@ -27,7 +24,6 @@ def is_valid_base64(value: str) -> bool:
     if not value:
         return False
 
-    # Base64 length should not be 1 mod 4.
     if len(value) % 4 == 1:
         return False
 
@@ -54,6 +50,25 @@ def decode_base64(value: str) -> str | None:
         return None
 
 
+def normalize_dns_section(dns_section: str) -> str | None:
+    items = [item.strip() for item in dns_section.split(",") if item.strip()]
+    if not items:
+        return None
+
+    normalized_items: list[str] = []
+
+    for item in items:
+        match = DNS_ITEM_RE.fullmatch(item)
+        if not match:
+            return None
+
+        ip = match.group(1)
+        port = match.group(2)
+        normalized_items.append(f"{ip}:{port}")
+
+    return ",".join(normalized_items)
+
+
 def extract_dns_section(decoded_text: str) -> str | None:
     parts = decoded_text.split("|")
     if len(parts) < 5:
@@ -63,10 +78,7 @@ def extract_dns_section(decoded_text: str) -> str | None:
     if not dns_section:
         return None
 
-    if not DNS_LIST_RE.fullmatch(dns_section):
-        return None
-
-    return dns_section
+    return normalize_dns_section(dns_section)
 
 
 def main() -> None:
