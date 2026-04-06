@@ -1,0 +1,31 @@
+name: Send to Bot
+
+on:
+  workflow_run:
+    workflows: ["Parse DNS"]  # Name of the primary workflow
+    types:
+      - completed  # Trigger only when the primary workflow is completed
+    branches: [main] 
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send-file:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Send file content to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot/bot.py
