@@ -1,103 +1,139 @@
-import os
-import sys
-import json
-import pathlib
-import html
-import urllib.request
-import urllib.error
+#!/usr/bin/env python3
+from __future__ import annotations
 
-TELEGRAM_API_BASE = "https://api.telegram.org"
-MAX_TELEGRAM_MESSAGE = 3900  # safety margin under Telegram message limits
+import base64
+import binascii
+import re
 
 
-def split_text(lines, limit: int = MAX_TELEGRAM_MESSAGE, header: str = "Parsed DNS for Slipnet:\n\n"):
-    chunks = []
-    current = []
-    current_len = len(header)
+INPUT_FILE = "tg/config.txt"
+INTERMEDIATE_FILE = "dns/dns_.txt"
+OUTPUT_FILE = "dns/dns.txt"
 
-    for line in lines:
-        line_len = len(line) + 1  # +1 for newline
+SLIPNET_PREFIX = "slipnet://"
 
-        if current and current_len + line_len > limit:
-            chunks.append(current)
-            current = [line]
-            current_len = len(header) + len(line) + 1
-        else:
-            current.append(line)
-            current_len += line_len
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+# Match IPv4:port:flag items, optionally comma-separated.
+IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+DNS_ITEM_RE = re.compile(
+    rf"^({IPV4_OCTET}(?:\.{IPV4_OCTET}){{3}}):(\d{{1,5}}):(\d+)$"
+)
 
 
-def send_telegram_message(token: str, chat_id: str, text: str):
-    url = f"{TELEGRAM_API_BASE}/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
+def is_valid_base64(value: str) -> bool:
+    value = value.strip()
+    if not value:
+        return False
 
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    if len(value) % 4 == 1:
+        return False
+
+    padded = value + "=" * (-len(value) % 4)
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            body = response.read().decode("utf-8", errors="replace")
-            result = json.loads(body)
-            if not result.get("ok"):
-                raise RuntimeError(f"Telegram API returned ok=false: {body}")
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP error from Telegram API: {e.code} - {error_body}") from e
-    except Exception as e:
-        raise RuntimeError(f"Failed to send Telegram message: {e}") from e
+        base64.b64decode(padded, validate=True)
+        return True
+    except (binascii.Error, ValueError):
+        return False
 
 
-def format_chunk(lines):
-    body = "\n".join(f"<code>{html.escape(line)}</code>" for line in lines if line.strip())
-    return f"Parsed DNS for Slipnet:\n\n{body}"
+def decode_base64(value: str) -> str | None:
+    value = value.strip()
+    if not is_valid_base64(value):
+        return None
+
+    padded = value + "=" * (-len(value) % 4)
+
+    try:
+        decoded = base64.b64decode(padded, validate=True)
+        return decoded.decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
 
 
-def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+def normalize_dns_section(dns_section: str) -> str | None:
+    items = [item.strip() for item in dns_section.split(",") if item.strip()]
+    if not items:
+        return None
 
-    if not token:
-        print("Missing environment variable: TELEGRAM_BOT_TOKEN", file=sys.stderr)
-        sys.exit(1)
+    normalized_items: list[str] = []
 
-    if not chat_id:
-        print("Missing environment variable: TELEGRAM_CHAT_ID", file=sys.stderr)
-        sys.exit(1)
+    for item in items:
+        match = DNS_ITEM_RE.fullmatch(item)
+        if not match:
+            return None
 
-    file_path = pathlib.Path("dns/dns.txt")
+        ip = match.group(1)
+        port = match.group(2)
+        normalized_items.append(f"{ip}:{port}")
 
-    if not file_path.exists():
-        print(f"File not found: {file_path}", file=sys.stderr)
-        sys.exit(1)
+    return ",".join(normalized_items)
 
-    content = file_path.read_text(encoding="utf-8", errors="replace")
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
 
-    if not lines:
-        lines = ["(dns/dns.txt is empty)"]
+def extract_dns_section(decoded_text: str) -> str | None:
+    parts = decoded_text.split("|")
+    if len(parts) < 5:
+        return None
 
-    chunks = split_text(lines)
+    dns_section = parts[4].strip()
+    if not dns_section:
+        return None
 
-    for chunk in chunks:
-        message = format_chunk(chunk)
-        send_telegram_message(token, chat_id, message)
+    return normalize_dns_section(dns_section)
 
-    print(f"Sent {len(chunks)} message(s) from {file_path}")
+
+def main() -> None:
+    try:
+        with open(INPUT_FILE, "r", encoding="utf-8", errors="ignore") as in_f:
+            lines = in_f.readlines()
+    except FileNotFoundError:
+        print(f"Input file not found: {INPUT_FILE}")
+        return
+
+    captured_dns: list[str] = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+
+        if not line.startswith(SLIPNET_PREFIX):
+            continue
+
+        payload = line[len(SLIPNET_PREFIX):].strip()
+        decoded = decode_base64(payload)
+        if decoded is None:
+            continue
+
+        dns_section = extract_dns_section(decoded)
+        if dns_section is None:
+            continue
+
+        captured_dns.append(dns_section)
+
+    with open(INTERMEDIATE_FILE, "w", encoding="utf-8") as out_f:
+        for dns_line in captured_dns:
+            out_f.write(dns_line + "\n")
+
+    seen: set[str] = set()
+    unique_dns: list[str] = []
+
+    with open(INTERMEDIATE_FILE, "r", encoding="utf-8", errors="ignore") as in_f:
+        for raw_line in in_f:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line in seen:
+                continue
+            seen.add(line)
+            unique_dns.append(line)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as out_f:
+        for dns_line in unique_dns:
+            out_f.write(f"🧬 {dns_line}\n")
+
+    print(f"Parsed: {INPUT_FILE}")
+    print(f"Captured DNS lines: {len(captured_dns)}")
+    print(f"Unique DNS lines: {len(unique_dns)}")
+    print(f"Saved intermediate: {INTERMEDIATE_FILE}")
+    print(f"Saved final: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
