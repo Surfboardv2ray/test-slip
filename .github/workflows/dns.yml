@@ -1,0 +1,37 @@
+name: Parse DNS
+on:
+  workflow_run:
+    workflows: ["TG"]  # Name of the primary workflow
+    types:
+      - completed  # Trigger only when the primary workflow is completed
+    branches: [main] 
+  workflow_dispatch:
+
+jobs:
+  parse-dns:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Clear output files
+        run: |
+          : > dns/dns.txt
+          : > dns/dns_.txt
+
+      - name: Run parser
+        run: python dns/dns.py
+
+      - name: Upload parsed DNS files
+        uses: actions/upload-artifact@v4
+        with:
+          name: dns-output
+          path: |
+            dns/dns.txt
+            dns/dns_.txt
