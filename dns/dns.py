@@ -12,15 +12,14 @@ OUTPUT_FILE = "dns/dns.txt"
 
 SLIPNET_PREFIX = "slipnet://"
 
-# Strict IPv4:port validator.
+# Strict IPv4 validator.
 IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
-PORT = r"(?:[1-9]\d{0,4})"
 
-# One or more IPv4:port items separated by commas.
-DNS_LIST_RE = re.compile(
-    rf"^{IPV4_OCTET}(?:\.{IPV4_OCTET}){{3}}:{PORT}"
-    rf"(?:,{IPV4_OCTET}(?:\.{IPV4_OCTET}){{3}}:{PORT})*$"
-)
+# Accept DNS parts like:
+# 8.8.8.8:53:0
+# 2.188.21.120:53:0,2.188.21.240:53:0,...
+DNS_ITEM_RE = rf"{IPV4_OCTET}(?:\.{IPV4_OCTET}){{3}}:\d{{1,5}}:\d+"
+DNS_LIST_RE = re.compile(rf"^{DNS_ITEM_RE}(?:,{DNS_ITEM_RE})*$")
 
 
 def is_valid_base64(value: str) -> bool:
@@ -78,7 +77,6 @@ def main() -> None:
         print(f"Input file not found: {INPUT_FILE}")
         return
 
-    # Collect valid DNS strings first.
     captured_dns: list[str] = []
 
     for raw_line in lines:
@@ -98,12 +96,10 @@ def main() -> None:
 
         captured_dns.append(dns_section)
 
-    # Save all captured DNS lines to dns_.txt.
     with open(INTERMEDIATE_FILE, "w", encoding="utf-8") as out_f:
         for dns_line in captured_dns:
             out_f.write(dns_line + "\n")
 
-    # Remove duplicates while preserving order, then save to dns.txt.
     seen: set[str] = set()
     unique_dns: list[str] = []
 
