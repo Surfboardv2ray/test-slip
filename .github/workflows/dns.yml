@@ -28,10 +28,15 @@ jobs:
       - name: Run parser
         run: python dns/dns.py
 
-      - name: Upload parsed DNS files
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-output
-          path: |
-            dns/dns.txt
-            dns/dns_.txt
+      - name: Local Authentication
+        run: |
+          git config --local user.name "GitHub Action"
+          git config --local user.email "action@github.com"
+  
+      - name: Commit & push Parser
+        run: |
+          git add .
+          timestamp=$(TZ='Asia/Tehran' date)
+          git commit -m "✅List updated ${timestamp}"
+          git pull
+          git push
